@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Verifikasi Tumpukan Coil</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load html5-qrcode library for scanning -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        /* Menggunakan font Inter */
+        body { font-family: 'Inter', sans-serif; background-color: #f7fafc; }
+        /* Styling untuk container utama */
+        .container-box {
+            max-width: 420px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        /* Custom styling untuk status OK (Hijau Cerah) */
+        .status-ok {
+            background-color: #38a169; /* Warna hijau yang cerah */
+            color: #ffffff;
+        }
+        /* Custom styling untuk status ERROR (Merah Cerah) */
+        .status-error {
+            background-color: #e53e3e; /* Warna merah yang cerah */
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div id="app" class="container-box w-full bg-white p-6 rounded-xl border border-gray-200">
+        <h1 class="text-2xl font-bold text-gray-800 mb-4 text-center">Verifikasi Tumpukan Coil</h1>
+        <p class="text-sm text-gray-600 mb-6 text-center">Langkah 1: Scan Coil. Langkah 2: Scan Lokasi Tumpukan.</p>
+
+        <!-- Display Area for Scanner -->
+        <div id="reader" class="w-full h-auto bg-gray-100 rounded-lg overflow-hidden mb-4"></div>
+
+        <!-- Inputs and Status -->
+        <div class="space-y-4">
+            <!-- Coil QR Code Status -->
+            <div id="coil-status" class="p-3 bg-blue-100 border-l-4 border-blue-500 rounded-md">
+                <p class="font-medium text-blue-700">QR Coil: <span id="coil-value" class="font-normal text-gray-600">Menunggu Scan...</span></p>
+                <p class="text-xs text-blue-500 hidden" id="thickness-display"></p>
+            </div>
+
+            <!-- Location QR Code Status -->
+            <div id="lokasi-status" class="p-3 bg-yellow-100 border-l-4 border-yellow-500 rounded-md">
+                <p class="font-medium text-yellow-700">QR Lokasi: <span id="lokasi-value" class="font-normal text-gray-600">Menunggu Scan...</span></p>
+                <p class="text-xs text-yellow-500 hidden" id="posisi-display"></p>
+            </div>
+
+            <!-- Action Button -->
+            <button id="scan-button" onclick="startScan()" class="w-full py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 shadow-md">
+                Mulai Scan Coil
+            </button>
+        </div>
+
+        <!-- Result Box (Hidden by default) -->
+        <div id="result-box" class="mt-6 p-6 text-center rounded-xl font-extrabold text-3xl transition duration-300 transform scale-100 hidden">
+            <!-- Isi akan diisi oleh JS -->
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loading-indicator" class="mt-6 text-center hidden">
+            <svg class="animate-spin h-5 w-5 mr-3 inline text-indigo-600" viewBox="0 0 24 24">...</svg>
+            <span class="text-indigo-600">Memproses Validasi...</span>
+        </div>
+    </div>
+
+<script>
+    // =======================================================
+    // PENTING: GANTI INI DENGAN URL WEB APP GOOGLE APPS SCRIPT ANDA
+    // Pastikan Apps Script Anda di-Deploy dengan 'Execute as: User accessing the web app' dan 'Who has access: Anyone'
+    // =======================================================
+    const GOOGLE_APP_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzsgF_xW9n_4wrDF3J0Ir5c2srNDMpQ9G6BUJXD_C7mJCMLi_V_349C3D-FYg8JhKgN/exec"; 
+    // =======================================================
+
+    let html5QrcodeScanner;
+    let currentStep = 'coil'; // 'coil' atau 'lokasi'
+    let qrCoilData = '';
+    let qrLokasiData = '';
+
+    const coilValueEl = document.getElementById('coil-value');
+    const lokasiValueEl = document.getElementById('lokasi-value');
+    const coilStatusEl = document.getElementById('coil-status');
+    const lokasiStatusEl = document.getElementById('lokasi-status');
+    const scanButtonEl = document.getElementById('scan-button');
+    const resultBoxEl = document.getElementById('result-box');
+    const loadingEl = document.getElementById('loading-indicator');
+    const thicknessDisplayEl = document.getElementById('thickness-display');
+    const posisiDisplayEl = document.getElementById('posisi-display');
+
+
+    function setupScanner() {
+        if (!html5QrcodeScanner) {
+            html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader",
+                { fps: 10, qrbox: { width: 250, height: 250 } },
+                /* verbose= */ false
+            );
+        }
+    }
+
+    function startScan() {
+        // Reset tampilan
+        resultBoxEl.classList.add('hidden');
+        resultBoxEl.className = 'mt-6 p-6 text-center rounded-xl font-extrabold text-3xl transition duration-300 transform scale-100 hidden';
+
+        setupScanner();
+        scanButtonEl.disabled = true;
+        scanButtonEl.textContent = `Scanning ${currentStep === 'coil' ? 'Coil...' : 'Lokasi...'} (Aktif)`;
+        
+        // Memulai scanner
+        html5QrcodeScanner.render(onScanSuccess, onScanError);
+        document.getElementById("reader").style.display = "block";
+    }
+
+    function stopScan() {
+        if (html5QrcodeScanner) {
+            html5QrcodeScanner.clear().catch(error => {
+                console.error("Gagal menghentikan scanner: ", error);
+            });
+            document.getElementById("reader").style.display = "none";
+        }
+        scanButtonEl.disabled = false;
+    }
+
+    async function onScanSuccess(decodedText, decodedResult) {
+        stopScan(); // Hentikan scanner segera setelah berhasil
+
+        if (currentStep === 'coil') {
+            qrCoilData = decodedText;
+            coilValueEl.textContent = qrCoilData;
+            coilStatusEl.classList.replace('bg-blue-100', 'bg-green-100');
+            coilStatusEl.classList.replace('border-blue-500', 'border-green-500');
+
+            // Ekstraksi dan tampilkan thickness (di frontend hanya untuk display)
+            try {
+                const partsCoil = qrCoilData.split(',');
+                const thicknessString = partsCoil[2].split('X')[0].trim();
+                const thickness = parseFloat(thicknessString);
+                thicknessDisplayEl.textContent = `Thickness: ${thickness.toFixed(3)} mm`;
+                thicknessDisplayEl.classList.remove('hidden');
+            } catch (e) {
+                thicknessDisplayEl.textContent = `Thickness: Error Parsing`;
+                thicknessDisplayEl.classList.remove('hidden');
+            }
+            
+            currentStep = 'lokasi';
+            scanButtonEl.textContent = 'Lanjut Scan Lokasi Tumpukan';
+            scanButtonEl.onclick = startScan; // Persiapan untuk langkah berikutnya
+        } else if (currentStep === 'lokasi') {
+            qrLokasiData = decodedText;
+            lokasiValueEl.textContent = qrLokasiData;
+            lokasiStatusEl.classList.replace('bg-yellow-100', 'bg-green-100');
+            lokasiStatusEl.classList.replace('border-yellow-500', 'border-green-500');
+
+            // Ekstraksi dan tampilkan posisi tumpukan
+            try {
+                const posisiTumpukanString = qrLokasiData.slice(-1); 
+                posisiDisplayEl.textContent = `Posisi: Tumpukan ${posisiTumpukanString}`;
+                posisiDisplayEl.classList.remove('hidden');
+            } catch (e) {
+                posisiDisplayEl.textContent = `Posisi: Error Parsing`;
+                posisiDisplayEl.classList.remove('hidden');
+            }
+
+            // Memulai proses validasi
+            await validateTumpukan();
+            
+            // Setelah validasi selesai, setel ulang ke langkah awal
+            currentStep = 'coil';
+            scanButtonEl.textContent = 'Ulangi Scan Coil Baru';
+            scanButtonEl.onclick = resetScan;
+        }
+    }
+
+    function onScanError(errorMessage) {
+        // Tampilkan error jika diperlukan, atau biarkan kosong agar tidak mengganggu
+        // console.warn(`QR Code Scan Error: ${errorMessage}`);
+    }
+
+    function resetScan() {
+        // Reset semua state dan tampilan
+        qrCoilData = '';
+        qrLokasiData = '';
+        currentStep = 'coil';
+        
+        coilValueEl.textContent = 'Menunggu Scan...';
+        lokasiValueEl.textContent = 'Menunggu Scan...';
+        thicknessDisplayEl.classList.add('hidden');
+        posisiDisplayEl.classList.add('hidden');
+
+        // Reset warna status
+        coilStatusEl.className = 'p-3 bg-blue-100 border-l-4 border-blue-500 rounded-md';
+        lokasiStatusEl.className = 'p-3 bg-yellow-100 border-l-4 border-yellow-500 rounded-md';
+
+        resultBoxEl.classList.add('hidden');
+        scanButtonEl.textContent = 'Mulai Scan Coil';
+        scanButtonEl.onclick = startScan;
+        scanButtonEl.disabled = false;
+    }
+
+    async function validateTumpukan() {
+        if (GOOGLE_APP_SCRIPT_URL.includes("YOUR_APPS_SCRIPT_DEPLOYMENT_URL_HERE")) {
+            displayResult('ERROR', 'KONFIGURASI SALAH', 'Mohon ganti URL Apps Script Anda di kode JS!');
+            return;
+        }
+
+        loadingEl.classList.remove('hidden');
+        scanButtonEl.disabled = true;
+
+        try {
+            const response = await fetch(GOOGLE_APP_SCRIPT_URL, {
+                method: 'POST',
+                mode: 'cors',
+                cache: 'no-cache',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                // Apps Script menerima payload sebagai x-www-form-urlencoded atau JSON stringified dalam body
+                body: JSON.stringify({
+                    qrCoil: qrCoilData,
+                    qrLokasi: qrLokasiData
+                })
+            });
+
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            
+            const result = await response.json();
+            
+            if (result.status === "OK") {
+                displayResult('OK', 'OK');
+            } else {
+                displayResult('ERROR', result.message);
+            }
+
+        } catch (error) {
+            console.error("Gagal terhubung ke Apps Script:", error);
+            displayResult('ERROR', 'Gagal Koneksi API', 'Cek koneksi internet atau URL Apps Script.');
+        } finally {
+            loadingEl.classList.add('hidden');
+            scanButtonEl.disabled = false;
+        }
+    }
+
+    function displayResult(status, message, subMessage = '') {
+        resultBoxEl.classList.remove('hidden');
+        resultBoxEl.textContent = message;
+        resultBoxEl.classList.remove('status-ok', 'status-error');
+
+        if (status === 'OK') {
+            resultBoxEl.classList.add('status-ok');
+            resultBoxEl.classList.add('animate-pulse');
+        } else {
+            resultBoxEl.classList.add('status-error');
+            resultBoxEl.classList.remove('animate-pulse');
+            if (subMessage) {
+                // Tampilkan pesan error tambahan di bawah kotak merah
+                const subMsgEl = document.createElement('p');
+                subMsgEl.className = 'text-base font-medium mt-2';
+                subMsgEl.textContent = subMessage;
+                resultBoxEl.appendChild(subMsgEl);
+            }
+        }
+    }
+
+    // Initialize the scanner setup on load
+    window.onload = setupScanner;
+</script>
+
+</body>
+</html>
